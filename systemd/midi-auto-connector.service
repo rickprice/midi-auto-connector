@@ -1,0 +1,21 @@
+[Unit]
+Description=MIDI auto-connector (ALSA/PipeWire regex-based MIDI auto-connect)
+# Both PipeWire and its ALSA MIDI bridge are per-user session services, so
+# this is written as a systemd --user unit, and starts after both.
+After=pipewire.service pipewire-pulse.service
+
+[Service]
+Type=simple
+ExecStart=%h/.cargo/bin/midi-auto-connector run
+Restart=on-failure
+RestartSec=2
+
+# Hardening. Remove or relax any of these if your Lua hooks need more
+# (e.g. NoNewPrivileges=false if a hook execs something that needs setuid).
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=read-only
+PrivateTmp=true
+
+[Install]
+WantedBy=default.target

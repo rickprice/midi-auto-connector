@@ -1,0 +1,37 @@
+[package]
+name = "midi-auto-connector"
+version = "0.1.0"
+edition = "2024"
+description = "A daemon that auto-connects ALSA and PipeWire MIDI ports based on regex rules, with optional Lua hooks on connect/disconnect."
+license = "BSD-3-Clause"
+repository = "https://github.com/rickprice/midi-auto-connector"
+readme = "README.md"
+keywords = ["midi", "alsa", "pipewire", "daemon", "audio"]
+categories = ["command-line-utilities", "multimedia::audio"]
+
+[[bin]]
+name = "midi-auto-connector"
+path = "src/main.rs"
+
+[profile.release]
+lto = true
+codegen-units = 1
+panic = "abort"
+
+[dependencies]
+alsa = "0.12.1"
+clap = { version = "4.6.7", features = ["derive"] }
+crossbeam-channel = "0.5.17"
+directories = "6.0.0"
+mlua = { version = "0.12", features = ["lua54", "vendored"] }
+pipewire = "0.10.1"
+regex = "1.13.1"
+serde = { version = "1.0.229", features = ["derive"] }
+signal-hook = "0.4.5"
+thiserror = "2.0.21"
+toml = "1.1.6"
+tracing = "0.1.44"
+tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
+
+[dev-dependencies]
+tempfile = "3.27.0"

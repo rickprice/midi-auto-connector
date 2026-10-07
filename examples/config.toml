@@ -1,0 +1,47 @@
+# Example midi-auto-connector configuration.
+#
+# Run `midi-auto-connector list-ports` to see the "client:port" names
+# currently visible on your system -- that's what `left` and `right`
+# regexes match against.
+
+# Which backends to start at all. Both default to true; set either to
+# false to disable it entirely (e.g. if you don't run PipeWire).
+[backends]
+alsa = true
+pipewire = true
+
+# Per-script timeout for on_connect/on_disconnect Lua hooks. A script
+# that runs longer than this is aborted and logged as a warning; the
+# connection itself is unaffected.
+[lua]
+timeout_ms = 500
+
+# Each [[rule]] row is independent: its own backend, its own left/right
+# regex pair, and (optionally) its own Lua hooks. You can have as many
+# rows as you like.
+
+[[rule]]
+name = "keylab-to-fluidsynth"
+backend = "alsa"
+# "left" matches a source ("client:port") that can send MIDI.
+left = "^Arturia KeyLab.*"
+# "right" matches a destination ("client:port") that can receive MIDI.
+right = "^FluidSynth.*"
+
+[[rule]]
+name = "launchkey-to-ableton"
+backend = "pipewire"
+left = "^Launchkey.*"
+right = "^Ableton Live.*"
+on_connect = "/etc/midi-auto-connector/hooks/launchkey-connect.lua"
+on_disconnect = "/etc/midi-auto-connector/hooks/launchkey-disconnect.lua"
+
+[[rule]]
+# "backend = any" evaluates this rule against ALSA ports and PipeWire
+# ports independently (never pairing one of each together), which is
+# handy for a rule that should apply regardless of which graph a
+# matching device happens to show up in.
+name = "any-controller-to-daw"
+backend = "any"
+left = "^Generic MIDI Controller.*"
+right = "^(Ableton Live|Bitwig Studio|REAPER).*"
