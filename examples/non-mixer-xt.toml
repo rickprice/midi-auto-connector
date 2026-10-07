@@ -10,9 +10,9 @@ pipewire = true
 timeout_ms = 500
 
 [[rule]]
-name = "midi-bridge-apro-to-sfizz"
-backend = "alsa"
-output = "^Midi-Bridge:A-PRO:A-PRO 1$"
+name = "a-pro-to-sfizz"
+backend = "pipewire"
+output = '^Midi-Bridge:A-PRO: 1 \(capture\)$'
 input = "^Non-Mixer-XT/Piano:sfizz Control$"
 
 [[rule]]

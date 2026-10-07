@@ -189,11 +189,12 @@ impl Config {
                     second: index,
                 });
             }
-            let output = Regex::new(&raw_rule.output).map_err(|source| ConfigError::OutputRegex {
-                index,
-                name: raw_rule.name.clone(),
-                source,
-            })?;
+            let output =
+                Regex::new(&raw_rule.output).map_err(|source| ConfigError::OutputRegex {
+                    index,
+                    name: raw_rule.name.clone(),
+                    source,
+                })?;
             let input = Regex::new(&raw_rule.input).map_err(|source| ConfigError::InputRegex {
                 index,
                 name: raw_rule.name.clone(),

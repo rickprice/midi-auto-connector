@@ -46,7 +46,38 @@ enum Command {
         config: Option<PathBuf>,
     },
     /// Print every currently visible MIDI port, for writing rule regexes.
-    ListPorts,
+    ListPorts {
+        /// Only show ports on this backend.
+        #[arg(short, long, value_enum)]
+        backend: Option<PortBackendFilter>,
+        /// Only show ports that can act as a source (what a rule's
+        /// `output` regex matches against).
+        #[arg(long)]
+        output: bool,
+        /// Only show ports that can act as a destination (what a rule's
+        /// `input` regex matches against).
+        #[arg(long)]
+        input: bool,
+    },
+}
+
+/// `--backend` choice for `list-ports`. A plain two-value subset of
+/// [`port::Backend`] -- there's no "any" here since omitting the flag
+/// already means "don't filter by backend".
+#[derive(Debug, Clone, Copy, PartialEq, Eq, clap::ValueEnum)]
+enum PortBackendFilter {
+    Alsa,
+    #[value(name = "pipewire")]
+    PipeWire,
+}
+
+impl PortBackendFilter {
+    fn matches(self, backend: Backend) -> bool {
+        match self {
+            PortBackendFilter::Alsa => backend == Backend::Alsa,
+            PortBackendFilter::PipeWire => backend == Backend::PipeWire,
+        }
+    }
 }
 
 fn main() {
@@ -61,7 +92,11 @@ fn main() {
     match cli.command.unwrap_or(Command::Run { config: None }) {
         Command::Run { config } => run(resolve_config_path(config)),
         Command::CheckConfig { config } => check_config(resolve_config_path(config)),
-        Command::ListPorts => list_ports(),
+        Command::ListPorts {
+            backend,
+            output,
+            input,
+        } => list_ports(backend, output, input),
     }
 }
 
@@ -167,7 +202,7 @@ fn spawn_signal_handler(shutdown_tx: crossbeam_channel::Sender<()>) {
         .expect("failed to spawn signal-handling thread");
 }
 
-fn list_ports() {
+fn list_ports(backend_filter: Option<PortBackendFilter>, output_only: bool, input_only: bool) {
     let (tx, rx) = crossbeam_channel::unbounded();
     let mut started_any = false;
 
@@ -200,10 +235,13 @@ fn list_ports() {
             ports.push(port);
         }
     }
+    ports.retain(|p| backend_filter.is_none_or(|b| b.matches(p.backend())));
+    ports.retain(|p| !output_only || p.direction.can_be_source);
+    ports.retain(|p| !input_only || p.direction.can_be_sink);
     ports.sort_by_key(|p| p.full_name());
 
     if ports.is_empty() {
-        println!("No MIDI ports found.");
+        println!("No MIDI ports found matching the given filters.");
         return;
     }
     for p in &ports {

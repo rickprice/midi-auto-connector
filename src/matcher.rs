@@ -63,10 +63,10 @@ pub fn compute_desired_connections(ports: &[PortInfo], rules: &[Rule]) -> Vec<De
                 let Some(dest_caps) = rule.input.captures(&dest_name) else {
                     continue;
                 };
-                if let Some(source_key) = &source_key {
-                    if &dest_caps[1] != source_key {
-                        continue;
-                    }
+                if let Some(source_key) = &source_key
+                    && &dest_caps[1] != source_key
+                {
+                    continue;
                 }
 
                 out.push(DesiredConnection {

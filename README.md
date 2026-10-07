@@ -103,6 +103,12 @@ midi-auto-connector check-config --config /path/to/config.toml
 # Print every MIDI port visible right now, with its "client:port" name --
 # exactly what your regexes match against. Handy for writing rules.
 midi-auto-connector list-ports
+
+# Narrow it down with --backend (alsa|pipewire), --output (source-capable
+# ports only), and/or --input (sink-capable ports only). They combine as
+# AND, so e.g. --backend pipewire --output lists only the PipeWire ports
+# a rule's `output` regex could match.
+midi-auto-connector list-ports --backend pipewire --output
 ```
 
 Logging is via `tracing`; set `RUST_LOG=midi_auto_connector=debug` for
