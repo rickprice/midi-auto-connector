@@ -138,6 +138,17 @@ impl Engine {
         }
     }
 
+    /// Disconnects every connection currently tracked as active, running
+    /// each one's `on_disconnect` hook along the way, same as if each
+    /// port involved had just disappeared. Used on a clean shutdown when
+    /// `disconnect_on_shutdown` is enabled.
+    pub fn disconnect_all(&mut self) {
+        let keys: Vec<(PortId, PortId)> = self.active.keys().cloned().collect();
+        for (source, dest) in keys {
+            self.teardown(source, dest);
+        }
+    }
+
     fn teardown(&mut self, source: PortId, dest: PortId) {
         let Some(active) = self.active.remove(&(source.clone(), dest.clone())) else {
             return;
@@ -278,6 +289,7 @@ mod tests {
                 pipewire: true,
             },
             lua: LuaConfig { timeout_ms: 1000 },
+            disconnect_on_shutdown: true,
             rules,
         }
     }
@@ -356,6 +368,54 @@ mod tests {
         );
         assert!(engine.active.is_empty());
         assert!(!engine.ports.contains_key(&source.id));
+    }
+
+    #[test]
+    fn disconnect_all_tears_down_every_active_connection() {
+        let backend = RecordingBackend::new("alsa");
+        let (mut engine, _tx) = engine_with(
+            vec![rule("a", "^OutA", "^InA"), rule("b", "^OutB", "^InB")],
+            backend.clone(),
+        );
+
+        let source_a = port(1, 0, "OutA", "p", true, false);
+        let dest_a = port(2, 0, "InA", "p", false, true);
+        let source_b = port(3, 0, "OutB", "p", true, false);
+        let dest_b = port(4, 0, "InB", "p", false, true);
+        engine.handle_event(BackendEvent::PortAdded(source_a.clone()));
+        engine.handle_event(BackendEvent::PortAdded(dest_a.clone()));
+        engine.handle_event(BackendEvent::PortAdded(source_b.clone()));
+        engine.handle_event(BackendEvent::PortAdded(dest_b.clone()));
+        assert_eq!(engine.active.len(), 2);
+
+        engine.disconnect_all();
+
+        assert!(engine.active.is_empty());
+        assert_eq!(
+            backend
+                .calls()
+                .iter()
+                .filter(|c| matches!(c, RecordedCall::Disconnect(..)))
+                .count(),
+            2
+        );
+        assert!(backend.calls().contains(&RecordedCall::Disconnect(
+            source_a.id.clone(),
+            dest_a.id.clone()
+        )));
+        assert!(backend.calls().contains(&RecordedCall::Disconnect(
+            source_b.id.clone(),
+            dest_b.id.clone()
+        )));
+    }
+
+    #[test]
+    fn disconnect_all_on_an_idle_engine_is_a_harmless_no_op() {
+        let backend = RecordingBackend::new("alsa");
+        let (mut engine, _tx) = engine_with(vec![rule("r", "^Out", "^In")], backend.clone());
+
+        engine.disconnect_all();
+        assert!(backend.calls().is_empty());
     }
 
     #[test]

@@ -274,11 +274,16 @@ fn run(config_path: PathBuf) {
     info!(rules = config.rules.len(), "midi-auto-connector running");
     engine.run(&shutdown_rx);
 
-    // Any connections made along the way persist on their own: ALSA
-    // subscriptions live at the kernel level independent of the client
-    // that requested them, and PipeWire links are created with
-    // `object.linger = true`. So shutting down here only needs to stop our
-    // own threads, not undo anything.
+    // Connections made along the way persist on their own by default:
+    // ALSA subscriptions live at the kernel level independent of the
+    // client that requested them, and PipeWire links are created with
+    // `object.linger = true`. `disconnect_on_shutdown` (default: true)
+    // controls whether that's actually what happens, or whether every
+    // active connection is torn down on the way out instead.
+    if config.disconnect_on_shutdown {
+        info!("disconnecting all active connections");
+        engine.disconnect_all();
+    }
     if let Some(mut pw) = pipewire_backend {
         pw.shutdown();
     }

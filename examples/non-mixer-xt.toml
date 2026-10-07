@@ -23,6 +23,25 @@ output = '^Midi-Bridge:midi-daemon:Metronome/midi-out:midi-daemon:Metronome/midi
 input = "^Non-Mixer-XT/Metronome:sfizz Control$"
 
 [[rule]]
+# Mains's own stereo output goes to a physical audio interface (its
+# "umc404hd_combined" PipeWire device). Channel numbering differs
+# between the two sides (Mains uses out-1/out-2, the interface uses
+# FL/FR), so there's no shared capture-group text to pair on -- two
+# explicit rules, one per channel, is simplest and safest here.
+name = "mains-out1-to-umc404hd-fl"
+backend = "pipewire"
+kind = "audio"
+output = '^Non-Mixer-XT/Mains:out-1$'
+input = '^umc404hd_combined:playback_FL$'
+
+[[rule]]
+name = "mains-out2-to-umc404hd-fr"
+backend = "pipewire"
+kind = "audio"
+output = '^Non-Mixer-XT/Mains:out-2$'
+input = '^umc404hd_combined:playback_FR$'
+
+[[rule]]
 # This is an *audio* rule (Non-Mixer-XT's strips expose audio out-N/in-N
 # ports on PipeWire, not MIDI) -- kind defaults to "midi", so it must be
 # set explicitly here.

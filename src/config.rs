@@ -109,8 +109,14 @@ struct RawConfig {
     backends: BackendsConfig,
     #[serde(default)]
     lua: LuaConfig,
+    #[serde(default = "default_disconnect_on_shutdown")]
+    disconnect_on_shutdown: bool,
     #[serde(default)]
     rule: Vec<RawRule>,
+}
+
+fn default_disconnect_on_shutdown() -> bool {
+    true
 }
 
 /// Which backends the daemon starts up at all. Independent of the
@@ -179,6 +185,7 @@ pub struct Rule {
 pub struct Config {
     pub backends: BackendsConfig,
     pub lua: LuaConfig,
+    pub disconnect_on_shutdown: bool,
     pub rules: Vec<Rule>,
 }
 
@@ -244,6 +251,7 @@ impl Config {
         Ok(Config {
             backends: raw.backends,
             lua: raw.lua,
+            disconnect_on_shutdown: raw.disconnect_on_shutdown,
             rules,
         })
     }
@@ -473,5 +481,37 @@ mod tests {
         assert!(cfg.backends.alsa);
         assert!(!cfg.backends.pipewire);
         assert_eq!(cfg.lua.timeout_ms, 1000);
+    }
+
+    #[test]
+    fn disconnect_on_shutdown_defaults_to_true_when_omitted() {
+        let cfg = parse(
+            r#"
+            [[rule]]
+            name = "r"
+            backend = "any"
+            output = ".*"
+            input = ".*"
+            "#,
+        )
+        .expect("valid config should parse");
+        assert!(cfg.disconnect_on_shutdown);
+    }
+
+    #[test]
+    fn disconnect_on_shutdown_can_be_disabled() {
+        let cfg = parse(
+            r#"
+            disconnect_on_shutdown = false
+
+            [[rule]]
+            name = "r"
+            backend = "any"
+            output = ".*"
+            input = ".*"
+            "#,
+        )
+        .expect("valid config should parse");
+        assert!(!cfg.disconnect_on_shutdown);
     }
 }

@@ -146,6 +146,8 @@ pipewire = true   # start the native PipeWire backend at all (default: true)
 [lua]
 timeout_ms = 500  # per-hook-invocation wall-clock budget (default: 500)
 
+disconnect_on_shutdown = true  # tear down every active connection on exit (default: true)
+
 [[rule]]
 name = "keylab-to-fluidsynth"   # must be unique
 backend = "alsa"                # "alsa" | "pipewire" | "any"
@@ -158,6 +160,17 @@ on_disconnect = "/path/to/disconnect.lua" # optional
 
 `output` always matches the sending port and `input` always matches the
 receiving port -- that mapping never flips.
+
+`disconnect_on_shutdown` controls what happens to every connection the
+daemon made by the time it exits (via Ctrl-C/SIGTERM, or because every
+backend disappeared). Defaults to `true`: every active connection is
+torn down on the way out, running each rule's `on_disconnect` hook along
+the way, same as if the ports involved had just disappeared. Set it to
+`false` to instead leave connections in place after the daemon exits --
+ALSA subscriptions live at the kernel level independent of the client
+that requested them, and PipeWire links are created with
+`object.linger = true`, so they're able to outlive the daemon if you
+want them to.
 
 `kind` defaults to `"midi"` if omitted, so existing configs keep working
 unchanged. `output`/`input` only ever match ports of that same kind --
