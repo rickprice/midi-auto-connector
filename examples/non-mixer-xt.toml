@@ -13,7 +13,7 @@ timeout_ms = 500
 [[rule]]
 name = "a-pro-to-sfizz"
 backend = "pipewire"
-output = '^Midi-Bridge:A-PRO: [12] \(capture\)$'
+output = '^Midi-Bridge:A-PRO: 1 \(capture\)$'
 input = "^Non-Mixer-XT/Piano:sfizz Control$"
 
 [[rule]]
