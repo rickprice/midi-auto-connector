@@ -1,8 +1,8 @@
 [package]
 name = "midi-auto-connector"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2024"
-description = "A daemon that auto-connects ALSA and PipeWire MIDI ports based on regex rules, with optional Lua hooks on connect/disconnect."
+description = "A daemon that auto-connects ALSA and PipeWire MIDI ports, and PipeWire audio ports, based on regex rules, with optional Lua hooks on connect/disconnect."
 license = "BSD-3-Clause"
 repository = "https://github.com/rickprice/midi-auto-connector"
 readme = "README.md"

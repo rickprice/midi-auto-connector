@@ -232,16 +232,22 @@ affects that one hook invocation, not the connection itself or the daemon.
 
 ## How connections persist
 
-Connections made by the daemon don't depend on it staying alive:
+Connections made by the daemon don't *inherently* depend on it staying
+alive:
 
 - ALSA sequencer subscriptions exist at the kernel level, independent of
   the client that requested them.
 - PipeWire links are created with `object.linger = true`, so they survive
   even after the daemon's own connection to the PipeWire server closes.
 
-So restarting (or briefly stopping) the daemon does not tear down anything
-it already connected; on the next startup it just reconciles against
-whatever's already there.
+Whether that's what actually happens on exit is controlled by
+`disconnect_on_shutdown` (see [Config format](#config-format) above) --
+the default (`true`) tears every active connection down on a clean exit,
+rather than leaving them in place. Set it to `false` to get the
+lower-level persistence described above instead: restarting (or briefly
+stopping) the daemon then does not tear down anything it already
+connected, and on the next startup it just reconciles against whatever's
+already there.
 
 ## License
 
