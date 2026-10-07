@@ -18,7 +18,8 @@ use backend::pipewire_backend::PipeWireBackend;
 use backend::{BackendEvent, BackendHandle};
 use config::Config;
 use engine::Engine;
-use port::{Backend, PortInfo, PortKind};
+use matcher::compute_desired_connections;
+use port::{Backend, PortId, PortInfo, PortKind};
 
 #[derive(Parser)]
 #[command(
@@ -42,6 +43,12 @@ enum Command {
     },
     /// Validate a config file and exit without starting any backend.
     CheckConfig {
+        #[arg(short, long)]
+        config: Option<PathBuf>,
+    },
+    /// Show every connection this config would make against the current
+    /// port set, without actually making any of them.
+    DryRun {
         #[arg(short, long)]
         config: Option<PathBuf>,
     },
@@ -113,6 +120,7 @@ fn main() {
     match cli.command.unwrap_or(Command::Run { config: None }) {
         Command::Run { config } => run(resolve_config_path(config)),
         Command::CheckConfig { config } => check_config(resolve_config_path(config)),
+        Command::DryRun { config } => dry_run(resolve_config_path(config)),
         Command::ListPorts {
             backend,
             kind,
@@ -139,6 +147,82 @@ fn check_config(path: PathBuf) {
             eprintln!("{} is invalid: {err}", path.display());
             std::process::exit(1);
         }
+    }
+}
+
+/// Loads `path`, starts only the backends it enables (mirroring [`run`]),
+/// and prints every connection [`compute_desired_connections`] would make
+/// against the port set visible right now -- without making any of them.
+fn dry_run(path: PathBuf) {
+    let config = match Config::load(&path) {
+        Ok(cfg) => cfg,
+        Err(err) => {
+            eprintln!("{} is invalid: {err}", path.display());
+            std::process::exit(1);
+        }
+    };
+
+    let (tx, rx) = crossbeam_channel::unbounded();
+    let mut started_any = false;
+
+    if config.backends.alsa {
+        match AlsaBackend::start(tx.clone()) {
+            Ok(backend) => {
+                started_any = true;
+                std::mem::forget(backend);
+            }
+            Err(err) => eprintln!("warning: could not start ALSA backend: {err}"),
+        }
+    }
+    if config.backends.pipewire {
+        match PipeWireBackend::start(tx.clone()) {
+            Ok(backend) => {
+                started_any = true;
+                std::mem::forget(backend);
+            }
+            Err(err) => eprintln!("warning: could not start PipeWire backend: {err}"),
+        }
+    }
+
+    if !started_any {
+        eprintln!(
+            "error: no backend is enabled in this config (or none could be started); nothing to dry-run"
+        );
+        std::process::exit(1);
+    }
+
+    drop(tx);
+    thread::sleep(Duration::from_millis(400));
+
+    let mut ports: Vec<PortInfo> = Vec::new();
+    while let Ok(event) = rx.try_recv() {
+        if let BackendEvent::PortAdded(port) = event {
+            ports.push(port);
+        }
+    }
+
+    let connections = compute_desired_connections(&ports, &config.rules);
+    if connections.is_empty() {
+        println!("No connections would be made against the current port set.");
+        return;
+    }
+
+    let describe = |id: &PortId| {
+        ports
+            .iter()
+            .find(|p| &p.id == id)
+            .map(|p| format!("[{} {}] {}", p.backend(), p.kind, p.full_name()))
+            .unwrap_or_else(|| id.to_string())
+    };
+
+    println!("{} connection(s) would be made:", connections.len());
+    for c in &connections {
+        println!(
+            "  [{}] {} -> {}",
+            c.rule_name,
+            describe(&c.source),
+            describe(&c.dest)
+        );
     }
 }
 

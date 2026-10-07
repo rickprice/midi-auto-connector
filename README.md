@@ -102,6 +102,12 @@ Other subcommands:
 # Validate a config file without starting any backend.
 midi-auto-connector check-config --config /path/to/config.toml
 
+# Show every connection this config would make against the ports visible
+# right now, without making any of them. Starts only the backend(s) the
+# config enables, same as `run` would -- a fast way to sanity-check a
+# rule set (e.g. after editing a regex) before actually running it.
+midi-auto-connector dry-run --config /path/to/config.toml
+
 # Print every MIDI/audio port visible right now, with its "client:port"
 # name -- exactly what your regexes match against. Handy for writing rules.
 midi-auto-connector list-ports
