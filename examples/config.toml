@@ -1,7 +1,7 @@
 # Example midi-auto-connector configuration.
 #
 # Run `midi-auto-connector list-ports` to see the "client:port" names
-# currently visible on your system -- that's what `left` and `right`
+# currently visible on your system -- that's what `output` and `input`
 # regexes match against.
 
 # Which backends to start at all. Both default to true; set either to
@@ -16,23 +16,23 @@ pipewire = true
 [lua]
 timeout_ms = 500
 
-# Each [[rule]] row is independent: its own backend, its own left/right
+# Each [[rule]] row is independent: its own backend, its own output/input
 # regex pair, and (optionally) its own Lua hooks. You can have as many
 # rows as you like.
 
 [[rule]]
 name = "keylab-to-fluidsynth"
 backend = "alsa"
-# "left" matches a source ("client:port") that can send MIDI.
-left = "^Arturia KeyLab.*"
-# "right" matches a destination ("client:port") that can receive MIDI.
-right = "^FluidSynth.*"
+# "output" matches a source ("client:port") that can send MIDI.
+output = "^Arturia KeyLab.*"
+# "input" matches a destination ("client:port") that can receive MIDI.
+input = "^FluidSynth.*"
 
 [[rule]]
 name = "launchkey-to-ableton"
 backend = "pipewire"
-left = "^Launchkey.*"
-right = "^Ableton Live.*"
+output = "^Launchkey.*"
+input = "^Ableton Live.*"
 on_connect = "/etc/midi-auto-connector/hooks/launchkey-connect.lua"
 on_disconnect = "/etc/midi-auto-connector/hooks/launchkey-disconnect.lua"
 
@@ -43,5 +43,15 @@ on_disconnect = "/etc/midi-auto-connector/hooks/launchkey-disconnect.lua"
 # matching device happens to show up in.
 name = "any-controller-to-daw"
 backend = "any"
-left = "^Generic MIDI Controller.*"
-right = "^(Ableton Live|Bitwig Studio|REAPER).*"
+output = "^Generic MIDI Controller.*"
+input = "^(Ableton Live|Bitwig Studio|REAPER).*"
+
+[[rule]]
+# When both regexes have exactly one capture group, a connection is only
+# made between pairs whose captured text is equal -- here, out-N only
+# connects to in-N, for any N, instead of fanning every out-* port into
+# every in-* port.
+name = "mixer-channels"
+backend = "alsa"
+output = '^Mixer:out-(\d+)$'
+input = '^Mixer:in-(\d+)$'

@@ -7,7 +7,7 @@ every time you plug it in, without touching `aconnect`/`pw-link`/QjackCtl
 by hand.
 
 - **Config-driven**: any number of `[[rule]]` rows, each with its own
-  `backend`, `left`/`right` regex pair, and optional Lua hooks.
+  `backend`, `output`/`input` regex pair, and optional Lua hooks.
 - **Event-driven, not polling**: each backend blocks on its own kernel/IPC
   event stream and reacts immediately; there's no periodic rescan.
 - **ALSA sequencer and native PipeWire**, independently enable-able, with
@@ -88,6 +88,12 @@ With no `--config`, it defaults to
 `$XDG_CONFIG_HOME/midi-auto-connector/config.toml` (typically
 `~/.config/midi-auto-connector/config.toml`).
 
+If no home directory can be resolved (e.g. `$HOME` is unset, as can happen
+under a system service account or a stripped-down container), it falls back
+to `/etc/midi-auto-connector/config.toml` instead. Nothing creates this file
+or directory automatically — you need to create it yourself if you're
+relying on this fallback.
+
 Other subcommands:
 
 ```sh
@@ -112,8 +118,10 @@ systemctl --user enable --now midi-auto-connector.service
 
 ## Config format
 
-See [`examples/config.toml`](examples/config.toml) for a complete example.
-The shape:
+See [`examples/config.toml`](examples/config.toml) for a complete example,
+or [`examples/non-mixer-xt.toml`](examples/non-mixer-xt.toml) for a
+capture-group-pairing setup that fans a multi-channel mixing session into
+a single mix bus. The shape:
 
 ```toml
 [backends]
@@ -126,15 +134,45 @@ timeout_ms = 500  # per-hook-invocation wall-clock budget (default: 500)
 [[rule]]
 name = "keylab-to-fluidsynth"   # must be unique
 backend = "alsa"                # "alsa" | "pipewire" | "any"
-left = "^Arturia KeyLab.*"      # regex matched against a source port's "client:port"
-right = "^FluidSynth.*"         # regex matched against a destination port's "client:port"
+output = "^Arturia KeyLab.*"    # regex matched against a source port's "client:port"
+input = "^FluidSynth.*"         # regex matched against a destination port's "client:port"
 on_connect = "/path/to/connect.lua"       # optional
 on_disconnect = "/path/to/disconnect.lua" # optional
 ```
 
+`output` always matches the sending port and `input` always matches the
+receiving port -- that mapping never flips.
+
 You can have as many `[[rule]]` rows as you like; each is matched
-independently. A rule fans out: if `left` matches 1 port and `right`
+independently. A rule fans out: if `output` matches 1 port and `input`
 matches 3, all 3 connections are made.
+
+### Pairing by capture group
+
+If `output` and `input` each contain exactly one regex capture group, a
+source/dest pair is only connected when the two captured substrings are
+equal, instead of the usual fan-out-to-everything behavior:
+
+```toml
+[[rule]]
+name = "mixer-channels"
+backend = "alsa"
+output = '^Mixer:out-(\d+)$'
+input = '^Mixer:in-(\d+)$'
+```
+
+(Use single-quoted TOML literal strings for regexes with backslashes --
+`\d` isn't a valid escape inside a double-quoted TOML string.)
+
+This connects `out-1` to `in-1`, `out-2` to `in-2`, and so on for any
+number of channels, but never `out-1` to `in-2`. The comparison is a plain
+string match on whatever the group captures, so it works for non-numeric
+labels too (e.g. capturing `_FL`/`_FR` suffixes). Multiple ports that
+happen to capture the same text (say, `out-1` ports on several different
+devices) all fan into every `input` match with that same captured text --
+pairing is "same key connects", not "exactly one-to-one". With zero or
+more than one capture group on either side, this falls back to the
+regular full fan-out.
 
 Run `midi-auto-connector list-ports` to see the exact `client:port` strings
 on your system before writing a rule's regexes.

@@ -239,12 +239,12 @@ mod tests {
         }
     }
 
-    fn rule(name: &str, left: &str, right: &str) -> Rule {
+    fn rule(name: &str, output: &str, input: &str) -> Rule {
         Rule {
             name: name.to_string(),
             backend: RuleBackend::Alsa,
-            left: Regex::new(left).unwrap(),
-            right: Regex::new(right).unwrap(),
+            output: Regex::new(output).unwrap(),
+            input: Regex::new(input).unwrap(),
             on_connect: None,
             on_disconnect: None,
         }

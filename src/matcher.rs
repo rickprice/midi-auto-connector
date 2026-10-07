@@ -24,25 +24,51 @@ pub struct DesiredConnection {
 /// mechanisms and can't bridge across each other. Each rule's `backend`
 /// field further restricts which backend(s) it is evaluated against.
 ///
+/// If a rule's `output` and `input` regexes each contain exactly one
+/// capture group, a source/dest pair is only connected when the two
+/// captured substrings are equal -- e.g. `output = "out-(\d+)"` paired
+/// with `input = "in-(\d+)"` connects `out-1` to `in-1` and `out-2` to
+/// `in-2`, but never `out-1` to `in-2`. The comparison is a plain string
+/// equality on whatever text each group captures, so it works just as
+/// well for labels (`_FL`/`_FR`) as for numeric indices. With zero or
+/// more than one capture group on either side, matching falls back to a
+/// full cross-join of every `output` match against every `input` match.
+///
 /// Pure and deterministic: the same `ports` and `rules` always produce the
 /// same result, in rule order, then source order, then dest order (as
 /// given in `ports`).
 pub fn compute_desired_connections(ports: &[PortInfo], rules: &[Rule]) -> Vec<DesiredConnection> {
     let mut out = Vec::new();
     for rule in rules {
+        let pair_by_capture = rule.output.captures_len() == 2 && rule.input.captures_len() == 2;
+
         for source in ports
             .iter()
             .filter(|p| rule.backend.applies_to(p.backend()))
             .filter(|p| p.direction.can_be_source)
-            .filter(|p| rule.left.is_match(&p.full_name()))
         {
+            let source_name = source.full_name();
+            let Some(source_caps) = rule.output.captures(&source_name) else {
+                continue;
+            };
+            let source_key = pair_by_capture.then(|| source_caps[1].to_string());
+
             for dest in ports
                 .iter()
                 .filter(|p| p.backend() == source.backend())
                 .filter(|p| p.direction.can_be_sink)
                 .filter(|p| p.id != source.id)
-                .filter(|p| rule.right.is_match(&p.full_name()))
             {
+                let dest_name = dest.full_name();
+                let Some(dest_caps) = rule.input.captures(&dest_name) else {
+                    continue;
+                };
+                if let Some(source_key) = &source_key {
+                    if &dest_caps[1] != source_key {
+                        continue;
+                    }
+                }
+
                 out.push(DesiredConnection {
                     rule_name: rule.name.clone(),
                     source: source.id.clone(),
@@ -61,12 +87,12 @@ mod tests {
     use crate::port::PortDirection;
     use regex::Regex;
 
-    fn rule(name: &str, backend: RuleBackend, left: &str, right: &str) -> Rule {
+    fn rule(name: &str, backend: RuleBackend, output: &str, input: &str) -> Rule {
         Rule {
             name: name.to_string(),
             backend,
-            left: Regex::new(left).unwrap(),
-            right: Regex::new(right).unwrap(),
+            output: Regex::new(output).unwrap(),
+            input: Regex::new(input).unwrap(),
             on_connect: None,
             on_disconnect: None,
         }
@@ -255,5 +281,78 @@ mod tests {
     fn no_ports_means_no_connections() {
         let rules = vec![rule("r", RuleBackend::Any, ".*", ".*")];
         assert!(compute_desired_connections(&[], &rules).is_empty());
+    }
+
+    #[test]
+    fn single_capture_group_pairs_by_equal_captured_text() {
+        let ports = vec![
+            alsa_port(1, 0, "Mixer", "out-1", true, false),
+            alsa_port(1, 1, "Mixer", "out-2", true, false),
+            alsa_port(2, 0, "Mixer", "in-1", false, true),
+            alsa_port(2, 1, "Mixer", "in-2", false, true),
+        ];
+        let rules = vec![rule(
+            "paired",
+            RuleBackend::Alsa,
+            r"^Mixer:out-(\d+)$",
+            r"^Mixer:in-(\d+)$",
+        )];
+
+        let got = compute_desired_connections(&ports, &rules);
+        assert_eq!(got.len(), 2);
+        assert!(
+            got.iter()
+                .any(|c| c.source == ports[0].id && c.dest == ports[2].id)
+        );
+        assert!(
+            got.iter()
+                .any(|c| c.source == ports[1].id && c.dest == ports[3].id)
+        );
+    }
+
+    #[test]
+    fn single_capture_group_pairs_by_label_not_just_digits() {
+        let ports = vec![
+            alsa_port(1, 0, "Mixer", "out-_FL", true, false),
+            alsa_port(1, 1, "Mixer", "out-_FR", true, false),
+            alsa_port(2, 0, "Mixer", "in-_FL", false, true),
+            alsa_port(2, 1, "Mixer", "in-_FR", false, true),
+        ];
+        let rules = vec![rule(
+            "paired-labels",
+            RuleBackend::Alsa,
+            r"^Mixer:out-(_F[LR])$",
+            r"^Mixer:in-(_F[LR])$",
+        )];
+
+        let got = compute_desired_connections(&ports, &rules);
+        assert_eq!(got.len(), 2);
+        assert!(
+            got.iter()
+                .any(|c| c.source == ports[0].id && c.dest == ports[2].id)
+        );
+        assert!(
+            got.iter()
+                .any(|c| c.source == ports[1].id && c.dest == ports[3].id)
+        );
+    }
+
+    #[test]
+    fn zero_or_multiple_capture_groups_still_fall_back_to_cross_join() {
+        let ports = vec![
+            alsa_port(1, 0, "Mixer", "out-1", true, false),
+            alsa_port(2, 0, "Mixer", "in-1", false, true),
+            alsa_port(2, 1, "Mixer", "in-2", false, true),
+        ];
+        // No capture group on the output side -> no pairing, full fan-out.
+        let rules = vec![rule(
+            "no-groups",
+            RuleBackend::Alsa,
+            r"^Mixer:out-\d+$",
+            r"^Mixer:in-(\d+)$",
+        )];
+
+        let got = compute_desired_connections(&ports, &rules);
+        assert_eq!(got.len(), 2);
     }
 }

@@ -1,6 +1,6 @@
 //! Config file schema: top-level settings plus a list of connection rules.
 //!
-//! Each `[[rule]]` row is independent: its own `backend`, `left`/`right`
+//! Each `[[rule]]` row is independent: its own `backend`, `output`/`input`
 //! regexes, and optional Lua hooks. A config normally has many rows, e.g.
 //! one per instrument/DAW pairing.
 
@@ -26,15 +26,15 @@ pub enum ConfigError {
         #[source]
         source: toml::de::Error,
     },
-    #[error("rule {index} ({name:?}) has an invalid `left` regex: {source}")]
-    LeftRegex {
+    #[error("rule {index} ({name:?}) has an invalid `output` regex: {source}")]
+    OutputRegex {
         index: usize,
         name: String,
         #[source]
         source: regex::Error,
     },
-    #[error("rule {index} ({name:?}) has an invalid `right` regex: {source}")]
-    RightRegex {
+    #[error("rule {index} ({name:?}) has an invalid `input` regex: {source}")]
+    InputRegex {
         index: usize,
         name: String,
         #[source]
@@ -122,21 +122,25 @@ impl Default for LuaConfig {
 struct RawRule {
     name: String,
     backend: RuleBackend,
-    left: String,
-    right: String,
+    output: String,
+    input: String,
     #[serde(default)]
     on_connect: Option<PathBuf>,
     #[serde(default)]
     on_disconnect: Option<PathBuf>,
 }
 
-/// A single, validated left/right connection rule.
+/// A single, validated output/input connection rule.
+///
+/// `output` always matches the source (sending) port and `input` always
+/// matches the destination (receiving) port -- that mapping never flips,
+/// unlike a visual "left"/"right" framing.
 #[derive(Debug, Clone)]
 pub struct Rule {
     pub name: String,
     pub backend: RuleBackend,
-    pub left: Regex,
-    pub right: Regex,
+    pub output: Regex,
+    pub input: Regex,
     pub on_connect: Option<PathBuf>,
     pub on_disconnect: Option<PathBuf>,
 }
@@ -185,12 +189,12 @@ impl Config {
                     second: index,
                 });
             }
-            let left = Regex::new(&raw_rule.left).map_err(|source| ConfigError::LeftRegex {
+            let output = Regex::new(&raw_rule.output).map_err(|source| ConfigError::OutputRegex {
                 index,
                 name: raw_rule.name.clone(),
                 source,
             })?;
-            let right = Regex::new(&raw_rule.right).map_err(|source| ConfigError::RightRegex {
+            let input = Regex::new(&raw_rule.input).map_err(|source| ConfigError::InputRegex {
                 index,
                 name: raw_rule.name.clone(),
                 source,
@@ -199,8 +203,8 @@ impl Config {
             rules.push(Rule {
                 name: raw_rule.name,
                 backend: raw_rule.backend,
-                left,
-                right,
+                output,
+                input,
                 on_connect: raw_rule.on_connect,
                 on_disconnect: raw_rule.on_disconnect,
             });
@@ -229,14 +233,14 @@ mod tests {
             [[rule]]
             name = "keyboard-to-synth"
             backend = "alsa"
-            left = "^Arturia.*"
-            right = "^FluidSynth.*"
+            output = "^Arturia.*"
+            input = "^FluidSynth.*"
 
             [[rule]]
             name = "controller-to-daw"
             backend = "pipewire"
-            left = "^Launchkey.*"
-            right = "^Ableton.*"
+            output = "^Launchkey.*"
+            input = "^Ableton.*"
             "#,
         )
         .expect("valid config should parse");
@@ -257,8 +261,8 @@ mod tests {
             [[rule]]
             name = "any-rule"
             backend = "any"
-            left = "left.*"
-            right = "right.*"
+            output = "output.*"
+            input = "input.*"
             on_connect = "/etc/midi-auto-connector/connect.lua"
             on_disconnect = "/etc/midi-auto-connector/disconnect.lua"
             "#,
@@ -279,33 +283,33 @@ mod tests {
     }
 
     #[test]
-    fn rejects_bad_left_regex() {
+    fn rejects_bad_output_regex() {
         let err = parse(
             r#"
             [[rule]]
             name = "bad"
             backend = "any"
-            left = "("
-            right = ".*"
+            output = "("
+            input = ".*"
             "#,
         )
         .unwrap_err();
-        assert!(matches!(err, ConfigError::LeftRegex { index: 0, .. }));
+        assert!(matches!(err, ConfigError::OutputRegex { index: 0, .. }));
     }
 
     #[test]
-    fn rejects_bad_right_regex() {
+    fn rejects_bad_input_regex() {
         let err = parse(
             r#"
             [[rule]]
             name = "bad"
             backend = "any"
-            left = ".*"
-            right = "("
+            output = ".*"
+            input = "("
             "#,
         )
         .unwrap_err();
-        assert!(matches!(err, ConfigError::RightRegex { index: 0, .. }));
+        assert!(matches!(err, ConfigError::InputRegex { index: 0, .. }));
     }
 
     #[test]
@@ -315,8 +319,8 @@ mod tests {
             [[rule]]
             name = ""
             backend = "any"
-            left = ".*"
-            right = ".*"
+            output = ".*"
+            input = ".*"
             "#,
         )
         .unwrap_err();
@@ -330,14 +334,14 @@ mod tests {
             [[rule]]
             name = "dup"
             backend = "any"
-            left = ".*"
-            right = ".*"
+            output = ".*"
+            input = ".*"
 
             [[rule]]
             name = "dup"
             backend = "any"
-            left = ".*"
-            right = ".*"
+            output = ".*"
+            input = ".*"
             "#,
         )
         .unwrap_err();
@@ -357,8 +361,8 @@ mod tests {
             r#"
             [[rule]]
             name = "no-backend"
-            left = ".*"
-            right = ".*"
+            output = ".*"
+            input = ".*"
             "#,
         )
         .unwrap_err();
@@ -389,8 +393,8 @@ mod tests {
             [[rule]]
             name = "r"
             backend = "alsa"
-            left = ".*"
-            right = ".*"
+            output = ".*"
+            input = ".*"
             "#,
         )
         .expect("valid config should parse");
