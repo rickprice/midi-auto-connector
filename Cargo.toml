@@ -7,7 +7,7 @@ license = "BSD-3-Clause"
 repository = "https://github.com/rickprice/midi-auto-connector"
 readme = "README.md"
 keywords = ["midi", "alsa", "pipewire", "daemon", "audio"]
-categories = ["command-line-utilities", "multimedia::audio"]
+categories = ["command-line-utilities", "multimedia"]
 
 [[bin]]
 name = "midi-auto-connector"
