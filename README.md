@@ -1,13 +1,15 @@
 # midi-auto-connector
 
 A daemon that watches the ALSA sequencer and/or the native PipeWire graph
-for MIDI ports appearing and disappearing, and automatically connects the
-ones that match your regex rules — reconnecting your keyboard to your synth
-every time you plug it in, without touching `aconnect`/`pw-link`/QjackCtl
-by hand.
+for MIDI (and, on PipeWire, audio) ports appearing and disappearing, and
+automatically connects the ones that match your regex rules —
+reconnecting your keyboard to your synth, or your mixer's channels to its
+mix bus, every time you plug it in or start it up, without touching
+`aconnect`/`pw-link`/QjackCtl by hand.
 
 - **Config-driven**: any number of `[[rule]]` rows, each with its own
-  `backend`, `output`/`input` regex pair, and optional Lua hooks.
+  `backend`, `kind` (midi or audio), `output`/`input` regex pair, and
+  optional Lua hooks.
 - **Event-driven, not polling**: each backend blocks on its own kernel/IPC
   event stream and reacts immediately; there's no periodic rescan.
 - **ALSA sequencer and native PipeWire**, independently enable-able, with
@@ -100,15 +102,16 @@ Other subcommands:
 # Validate a config file without starting any backend.
 midi-auto-connector check-config --config /path/to/config.toml
 
-# Print every MIDI port visible right now, with its "client:port" name --
-# exactly what your regexes match against. Handy for writing rules.
+# Print every MIDI/audio port visible right now, with its "client:port"
+# name -- exactly what your regexes match against. Handy for writing rules.
 midi-auto-connector list-ports
 
-# Narrow it down with --backend (alsa|pipewire), --output (source-capable
-# ports only), and/or --input (sink-capable ports only). They combine as
-# AND, so e.g. --backend pipewire --output lists only the PipeWire ports
-# a rule's `output` regex could match.
-midi-auto-connector list-ports --backend pipewire --output
+# Narrow it down with --backend (alsa|pipewire), --kind (midi|audio),
+# --output (source-capable ports only), and/or --input (sink-capable
+# ports only). They combine as AND, so e.g. --backend pipewire --kind
+# audio --output lists only the PipeWire audio ports a rule's `output`
+# regex could match.
+midi-auto-connector list-ports --backend pipewire --kind audio --output
 ```
 
 Logging is via `tracing`; set `RUST_LOG=midi_auto_connector=debug` for
@@ -140,6 +143,7 @@ timeout_ms = 500  # per-hook-invocation wall-clock budget (default: 500)
 [[rule]]
 name = "keylab-to-fluidsynth"   # must be unique
 backend = "alsa"                # "alsa" | "pipewire" | "any"
+kind = "midi"                   # "midi" (default) | "audio"
 output = "^Arturia KeyLab.*"    # regex matched against a source port's "client:port"
 input = "^FluidSynth.*"         # regex matched against a destination port's "client:port"
 on_connect = "/path/to/connect.lua"       # optional
@@ -148,6 +152,14 @@ on_disconnect = "/path/to/disconnect.lua" # optional
 
 `output` always matches the sending port and `input` always matches the
 receiving port -- that mapping never flips.
+
+`kind` defaults to `"midi"` if omitted, so existing configs keep working
+unchanged. `output`/`input` only ever match ports of that same kind --
+a `midi` rule can't accidentally wire an audio port to a MIDI one, even
+if a name happens to match both. Audio ports only exist on the PipeWire
+backend: the ALSA sequencer API this daemon's ALSA backend uses has no
+concept of audio, so `kind = "audio"` combined with `backend = "alsa"`
+is valid but will never match anything.
 
 You can have as many `[[rule]]` rows as you like; each is matched
 independently. A rule fans out: if `output` matches 1 port and `input`

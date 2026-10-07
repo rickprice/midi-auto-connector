@@ -56,6 +56,26 @@ impl fmt::Display for PortId {
     }
 }
 
+/// Which kind of data flows through a port.
+///
+/// The ALSA backend only ever produces `Midi` (the sequencer API it's
+/// built on has no concept of audio); the PipeWire backend produces
+/// either, based on the port's negotiated DSP format.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum PortKind {
+    Midi,
+    Audio,
+}
+
+impl fmt::Display for PortKind {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            PortKind::Midi => write!(f, "midi"),
+            PortKind::Audio => write!(f, "audio"),
+        }
+    }
+}
+
 /// Which direction(s) of data a port supports, in ALSA-seq terms:
 /// a port that `can_be_source` can be the *sender* half of a subscription,
 /// a port that `can_be_sink` can be the *receiver* half. Most hardware
@@ -73,6 +93,7 @@ pub struct PortInfo {
     pub client_name: String,
     pub port_name: String,
     pub direction: PortDirection,
+    pub kind: PortKind,
 }
 
 impl PortInfo {
@@ -104,6 +125,7 @@ mod tests {
                 can_be_source: true,
                 can_be_sink: false,
             },
+            kind: PortKind::Midi,
         };
         assert_eq!(p.full_name(), "Arturia KeyLab mkII:MIDI 1");
     }

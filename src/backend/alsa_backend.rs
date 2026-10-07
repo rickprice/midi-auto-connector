@@ -20,7 +20,7 @@ use crossbeam_channel::Sender;
 use tracing::{debug, warn};
 
 use crate::backend::{BackendEvent, BackendHandle};
-use crate::port::{PortDirection, PortId, PortInfo};
+use crate::port::{PortDirection, PortId, PortInfo, PortKind};
 
 /// ALSA reserves client id 0 for the kernel's own "System" client (the
 /// timer and announce ports); it never represents a real MIDI device.
@@ -222,6 +222,7 @@ fn port_info_to_port(client_name: &str, port: &alsa::seq::PortInfo) -> Option<Po
             can_be_source,
             can_be_sink,
         },
+        kind: PortKind::Midi,
     })
 }
 

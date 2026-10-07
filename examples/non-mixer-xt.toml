@@ -1,6 +1,7 @@
-# Example: routing a hardware controller and a Non-Mixer-XT session into a
-# single "Mains" mix bus, using capture-group pairing to avoid writing one
-# [[rule]] per instrument per channel.
+# Example: a MIDI keyboard driving a software instrument's control port,
+# plus routing that Non-Mixer-XT mixing session's audio into a single
+# "Mains" mix bus -- using capture-group pairing to avoid writing one
+# [[rule]] per instrument per audio channel.
 
 [backends]
 alsa = true
@@ -12,17 +13,28 @@ timeout_ms = 500
 [[rule]]
 name = "a-pro-to-sfizz"
 backend = "pipewire"
-output = '^Midi-Bridge:A-PRO: 1 \(capture\)$'
+output = '^Midi-Bridge:A-PRO: [12] \(capture\)$'
 input = "^Non-Mixer-XT/Piano:sfizz Control$"
 
 [[rule]]
-# Both regexes capture exactly one group (the channel number), so a
-# connection is only made between pairs whose captured text matches:
-# out-1 -> in-1, out-2 -> in-2, etc. This fans every Non-Mixer-XT strip's
-# out-N port (Piano, Vocals, Guitar, Metronome, ...) into Mains:in-N for
-# that same N, regardless of how many strips exist or how many channels
-# each one has.
+# This is an *audio* rule (Non-Mixer-XT's strips expose audio out-N/in-N
+# ports on PipeWire, not MIDI) -- kind defaults to "midi", so it must be
+# set explicitly here.
+#
+# Both regexes capture exactly one group (the channel number: the
+# instrument-name alternation on the output side is a non-capturing
+# `(?:...)` group so it doesn't count as a second one), so a connection
+# is only made between pairs whose captured text matches: out-1 -> in-1,
+# out-2 -> in-2, etc. This fans each named instrument's out-N port into
+# Mains:in-N for that same N.
+#
+# The instrument names are listed explicitly rather than matched with a
+# wildcard like `[^:]+` -- Mains has its own out-1/out-2 ports too (its
+# main output, presumably to an audio interface), and a wildcard would
+# match those and wire Mains's output back into its own input, an audio
+# feedback loop.
 name = "non-mixer-to-mains"
-backend = "alsa"
-output = '^Non-Mixer-XT/[^:]+:out-(\d+)$'
+backend = "pipewire"
+kind = "audio"
+output = '^Non-Mixer-XT/(?:Metronome|Piano|Vocals|Guitar):out-(\d+)$'
 input = '^Non-Mixer-XT/Mains:in-(\d+)$'

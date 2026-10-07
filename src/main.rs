@@ -18,13 +18,13 @@ use backend::pipewire_backend::PipeWireBackend;
 use backend::{BackendEvent, BackendHandle};
 use config::Config;
 use engine::Engine;
-use port::{Backend, PortInfo};
+use port::{Backend, PortInfo, PortKind};
 
 #[derive(Parser)]
 #[command(
     name = "midi-auto-connector",
     version,
-    about = "Auto-connects ALSA and PipeWire MIDI ports by regex rule."
+    about = "Auto-connects ALSA and PipeWire MIDI ports, and PipeWire audio ports, by regex rule."
 )]
 struct Cli {
     #[command(subcommand)]
@@ -45,11 +45,16 @@ enum Command {
         #[arg(short, long)]
         config: Option<PathBuf>,
     },
-    /// Print every currently visible MIDI port, for writing rule regexes.
+    /// Print every currently visible MIDI/audio port, for writing rule
+    /// regexes.
     ListPorts {
         /// Only show ports on this backend.
         #[arg(short, long, value_enum)]
         backend: Option<PortBackendFilter>,
+        /// Only show ports of this kind (audio ports only ever exist on
+        /// the PipeWire backend).
+        #[arg(short, long, value_enum)]
+        kind: Option<PortKindFilter>,
         /// Only show ports that can act as a source (what a rule's
         /// `output` regex matches against).
         #[arg(long)]
@@ -80,6 +85,22 @@ impl PortBackendFilter {
     }
 }
 
+/// `--kind` choice for `list-ports`. A CLI-facing mirror of [`port::PortKind`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, clap::ValueEnum)]
+enum PortKindFilter {
+    Midi,
+    Audio,
+}
+
+impl PortKindFilter {
+    fn matches(self, kind: PortKind) -> bool {
+        match self {
+            PortKindFilter::Midi => kind == PortKind::Midi,
+            PortKindFilter::Audio => kind == PortKind::Audio,
+        }
+    }
+}
+
 fn main() {
     tracing_subscriber::fmt()
         .with_env_filter(
@@ -94,9 +115,10 @@ fn main() {
         Command::CheckConfig { config } => check_config(resolve_config_path(config)),
         Command::ListPorts {
             backend,
+            kind,
             output,
             input,
-        } => list_ports(backend, output, input),
+        } => list_ports(backend, kind, output, input),
     }
 }
 
@@ -202,7 +224,12 @@ fn spawn_signal_handler(shutdown_tx: crossbeam_channel::Sender<()>) {
         .expect("failed to spawn signal-handling thread");
 }
 
-fn list_ports(backend_filter: Option<PortBackendFilter>, output_only: bool, input_only: bool) {
+fn list_ports(
+    backend_filter: Option<PortBackendFilter>,
+    kind_filter: Option<PortKindFilter>,
+    output_only: bool,
+    input_only: bool,
+) {
     let (tx, rx) = crossbeam_channel::unbounded();
     let mut started_any = false;
 
@@ -236,18 +263,20 @@ fn list_ports(backend_filter: Option<PortBackendFilter>, output_only: bool, inpu
         }
     }
     ports.retain(|p| backend_filter.is_none_or(|b| b.matches(p.backend())));
+    ports.retain(|p| kind_filter.is_none_or(|k| k.matches(p.kind)));
     ports.retain(|p| !output_only || p.direction.can_be_source);
     ports.retain(|p| !input_only || p.direction.can_be_sink);
     ports.sort_by_key(|p| p.full_name());
 
     if ports.is_empty() {
-        println!("No MIDI ports found matching the given filters.");
+        println!("No ports found matching the given filters.");
         return;
     }
     for p in &ports {
         println!(
-            "[{}] {:<60} source={:<5} sink={:<5}",
+            "[{} {}] {:<60} source={:<5} sink={:<5}",
             p.backend(),
+            p.kind,
             p.full_name(),
             p.direction.can_be_source,
             p.direction.can_be_sink

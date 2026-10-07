@@ -189,8 +189,8 @@ fn path_backend_hint<'a>(rule_name: &str, rules: &'a HashMap<String, Rule>) -> O
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::config::{BackendsConfig, LuaConfig, RuleBackend};
-    use crate::port::PortDirection;
+    use crate::config::{BackendsConfig, LuaConfig, RuleBackend, RuleKind};
+    use crate::port::{PortDirection, PortKind};
     use regex::Regex;
     use std::sync::{Arc, Mutex};
 
@@ -243,6 +243,7 @@ mod tests {
         Rule {
             name: name.to_string(),
             backend: RuleBackend::Alsa,
+            kind: RuleKind::Midi,
             output: Regex::new(output).unwrap(),
             input: Regex::new(input).unwrap(),
             on_connect: None,
@@ -266,6 +267,7 @@ mod tests {
                 can_be_source: src,
                 can_be_sink: sink,
             },
+            kind: PortKind::Midi,
         }
     }
 

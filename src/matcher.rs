@@ -23,6 +23,9 @@ pub struct DesiredConnection {
 /// backend: ALSA-seq subscriptions and PipeWire links are different
 /// mechanisms and can't bridge across each other. Each rule's `backend`
 /// field further restricts which backend(s) it is evaluated against.
+/// Likewise, a rule's `kind` restricts it to ports of that kind only --
+/// `output`/`input` never match a port of the other kind, so a rule can
+/// never cross-wire an audio port to a MIDI one.
 ///
 /// If a rule's `output` and `input` regexes each contain exactly one
 /// capture group, a source/dest pair is only connected when the two
@@ -45,6 +48,7 @@ pub fn compute_desired_connections(ports: &[PortInfo], rules: &[Rule]) -> Vec<De
         for source in ports
             .iter()
             .filter(|p| rule.backend.applies_to(p.backend()))
+            .filter(|p| rule.kind.matches(p.kind))
             .filter(|p| p.direction.can_be_source)
         {
             let source_name = source.full_name();
@@ -56,6 +60,7 @@ pub fn compute_desired_connections(ports: &[PortInfo], rules: &[Rule]) -> Vec<De
             for dest in ports
                 .iter()
                 .filter(|p| p.backend() == source.backend())
+                .filter(|p| rule.kind.matches(p.kind))
                 .filter(|p| p.direction.can_be_sink)
                 .filter(|p| p.id != source.id)
             {
@@ -83,14 +88,25 @@ pub fn compute_desired_connections(ports: &[PortInfo], rules: &[Rule]) -> Vec<De
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::config::RuleBackend;
-    use crate::port::PortDirection;
+    use crate::config::{RuleBackend, RuleKind};
+    use crate::port::{PortDirection, PortKind};
     use regex::Regex;
 
     fn rule(name: &str, backend: RuleBackend, output: &str, input: &str) -> Rule {
+        rule_kind(name, backend, RuleKind::Midi, output, input)
+    }
+
+    fn rule_kind(
+        name: &str,
+        backend: RuleBackend,
+        kind: RuleKind,
+        output: &str,
+        input: &str,
+    ) -> Rule {
         Rule {
             name: name.to_string(),
             backend,
+            kind,
             output: Regex::new(output).unwrap(),
             input: Regex::new(input).unwrap(),
             on_connect: None,
@@ -114,6 +130,7 @@ mod tests {
                 can_be_source: src,
                 can_be_sink: sink,
             },
+            kind: PortKind::Midi,
         }
     }
 
@@ -125,6 +142,26 @@ mod tests {
         src: bool,
         sink: bool,
     ) -> PortInfo {
+        pw_port_kind(
+            node_id,
+            port_id,
+            client_name,
+            port_name,
+            src,
+            sink,
+            PortKind::Midi,
+        )
+    }
+
+    fn pw_port_kind(
+        node_id: u32,
+        port_id: u32,
+        client_name: &str,
+        port_name: &str,
+        src: bool,
+        sink: bool,
+        kind: PortKind,
+    ) -> PortInfo {
         PortInfo {
             id: PortId::PipeWire { node_id, port_id },
             client_name: client_name.to_string(),
@@ -133,6 +170,7 @@ mod tests {
                 can_be_source: src,
                 can_be_sink: sink,
             },
+            kind,
         }
     }
 
@@ -354,5 +392,90 @@ mod tests {
 
         let got = compute_desired_connections(&ports, &rules);
         assert_eq!(got.len(), 2);
+    }
+
+    #[test]
+    fn midi_rule_ignores_audio_ports_even_with_matching_names() {
+        let ports = vec![
+            pw_port_kind(1, 0, "Device", "out", true, false, PortKind::Audio),
+            pw_port_kind(2, 0, "Device", "in", false, true, PortKind::Audio),
+        ];
+        let rules = vec![rule(
+            "midi-only",
+            RuleBackend::PipeWire,
+            "^Device",
+            "^Device",
+        )];
+
+        let got = compute_desired_connections(&ports, &rules);
+        assert!(
+            got.is_empty(),
+            "a midi rule must not match audio ports, even with identical names"
+        );
+    }
+
+    #[test]
+    fn audio_rule_ignores_midi_ports_even_with_matching_names() {
+        let ports = vec![
+            pw_port(1, 0, "Device", "out", true, false),
+            pw_port(2, 0, "Device", "in", false, true),
+        ];
+        let rules = vec![rule_kind(
+            "audio-only",
+            RuleBackend::PipeWire,
+            RuleKind::Audio,
+            "^Device",
+            "^Device",
+        )];
+
+        let got = compute_desired_connections(&ports, &rules);
+        assert!(
+            got.is_empty(),
+            "an audio rule must not match midi ports, even with identical names"
+        );
+    }
+
+    #[test]
+    fn audio_rule_connects_audio_ports_with_channel_pairing() {
+        let ports = vec![
+            pw_port_kind(1, 0, "Interface", "output_FL", true, false, PortKind::Audio),
+            pw_port_kind(1, 1, "Interface", "output_FR", true, false, PortKind::Audio),
+            pw_port_kind(
+                2,
+                0,
+                "Speakers",
+                "playback_FL",
+                false,
+                true,
+                PortKind::Audio,
+            ),
+            pw_port_kind(
+                2,
+                1,
+                "Speakers",
+                "playback_FR",
+                false,
+                true,
+                PortKind::Audio,
+            ),
+        ];
+        let rules = vec![rule_kind(
+            "audio-channels",
+            RuleBackend::PipeWire,
+            RuleKind::Audio,
+            r"^Interface:output_(FL|FR)$",
+            r"^Speakers:playback_(FL|FR)$",
+        )];
+
+        let got = compute_desired_connections(&ports, &rules);
+        assert_eq!(got.len(), 2);
+        assert!(
+            got.iter()
+                .any(|c| c.source == ports[0].id && c.dest == ports[2].id)
+        );
+        assert!(
+            got.iter()
+                .any(|c| c.source == ports[1].id && c.dest == ports[3].id)
+        );
     }
 }

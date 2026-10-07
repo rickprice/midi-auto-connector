@@ -33,7 +33,7 @@ use pipewire::types::ObjectType;
 use tracing::{debug, warn};
 
 use crate::backend::{BackendEvent, BackendHandle};
-use crate::port::{PortDirection, PortId, PortInfo};
+use crate::port::{PortDirection, PortId, PortInfo, PortKind};
 
 enum PwCommand {
     Connect { source: PortId, dest: PortId },
@@ -229,13 +229,18 @@ fn on_port_global(
 ) {
     let Some(props) = global.props else { return };
 
-    let is_midi = props
-        .get(*keys::FORMAT_DSP)
-        .map(|v| v.to_ascii_lowercase().contains("midi"))
-        .unwrap_or(false);
-    if !is_midi {
+    let Some(kind) = props.get(*keys::FORMAT_DSP).and_then(|v| {
+        let v = v.to_ascii_lowercase();
+        if v.contains("midi") {
+            Some(PortKind::Midi)
+        } else if v.contains("audio") {
+            Some(PortKind::Audio)
+        } else {
+            None
+        }
+    }) else {
         return;
-    }
+    };
 
     let Some(node_id) = props
         .get(*keys::NODE_ID)
@@ -271,6 +276,7 @@ fn on_port_global(
             can_be_source,
             can_be_sink,
         },
+        kind,
     };
     let _ = events_tx.send(BackendEvent::PortAdded(info));
 }

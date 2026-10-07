@@ -10,7 +10,7 @@ use regex::Regex;
 use serde::Deserialize;
 use thiserror::Error;
 
-use crate::port::Backend;
+use crate::port::{Backend, PortKind};
 
 #[derive(Debug, Error)]
 pub enum ConfigError {
@@ -77,6 +77,32 @@ impl RuleBackend {
     }
 }
 
+/// Which kind of port a rule's `output`/`input` regexes are evaluated
+/// against. Defaults to `midi` so existing configs without a `kind` field
+/// keep behaving exactly as before.
+///
+/// Audio ports only ever exist on the PipeWire backend (the ALSA
+/// sequencer API this daemon's ALSA backend uses has no concept of
+/// audio), so `kind = "audio"` combined with `backend = "alsa"` is valid
+/// but will never match anything.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum RuleKind {
+    #[default]
+    Midi,
+    Audio,
+}
+
+impl RuleKind {
+    /// Whether a port of the given kind is in scope for this rule.
+    pub fn matches(self, kind: PortKind) -> bool {
+        match self {
+            RuleKind::Midi => kind == PortKind::Midi,
+            RuleKind::Audio => kind == PortKind::Audio,
+        }
+    }
+}
+
 #[derive(Debug, Deserialize)]
 struct RawConfig {
     #[serde(default)]
@@ -122,6 +148,8 @@ impl Default for LuaConfig {
 struct RawRule {
     name: String,
     backend: RuleBackend,
+    #[serde(default)]
+    kind: RuleKind,
     output: String,
     input: String,
     #[serde(default)]
@@ -139,6 +167,7 @@ struct RawRule {
 pub struct Rule {
     pub name: String,
     pub backend: RuleBackend,
+    pub kind: RuleKind,
     pub output: Regex,
     pub input: Regex,
     pub on_connect: Option<PathBuf>,
@@ -204,6 +233,7 @@ impl Config {
             rules.push(Rule {
                 name: raw_rule.name,
                 backend: raw_rule.backend,
+                kind: raw_rule.kind,
                 output,
                 input,
                 on_connect: raw_rule.on_connect,
@@ -249,6 +279,7 @@ mod tests {
         assert_eq!(cfg.rules.len(), 2);
         assert_eq!(cfg.rules[0].name, "keyboard-to-synth");
         assert_eq!(cfg.rules[0].backend, RuleBackend::Alsa);
+        assert_eq!(cfg.rules[0].kind, RuleKind::Midi);
         assert_eq!(cfg.rules[1].backend, RuleBackend::PipeWire);
         assert!(cfg.backends.alsa);
         assert!(cfg.backends.pipewire);
@@ -378,6 +409,45 @@ mod tests {
         assert!(!RuleBackend::PipeWire.applies_to(Backend::Alsa));
         assert!(RuleBackend::Any.applies_to(Backend::Alsa));
         assert!(RuleBackend::Any.applies_to(Backend::PipeWire));
+    }
+
+    #[test]
+    fn rule_kind_matches_only_the_same_kind() {
+        assert!(RuleKind::Midi.matches(PortKind::Midi));
+        assert!(!RuleKind::Midi.matches(PortKind::Audio));
+        assert!(RuleKind::Audio.matches(PortKind::Audio));
+        assert!(!RuleKind::Audio.matches(PortKind::Midi));
+    }
+
+    #[test]
+    fn rule_kind_defaults_to_midi_when_omitted() {
+        let cfg = parse(
+            r#"
+            [[rule]]
+            name = "r"
+            backend = "any"
+            output = ".*"
+            input = ".*"
+            "#,
+        )
+        .expect("valid config should parse");
+        assert_eq!(cfg.rules[0].kind, RuleKind::Midi);
+    }
+
+    #[test]
+    fn rule_kind_audio_parses() {
+        let cfg = parse(
+            r#"
+            [[rule]]
+            name = "r"
+            backend = "pipewire"
+            kind = "audio"
+            output = ".*"
+            input = ".*"
+            "#,
+        )
+        .expect("valid config should parse");
+        assert_eq!(cfg.rules[0].kind, RuleKind::Audio);
     }
 
     #[test]
