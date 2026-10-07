@@ -17,6 +17,12 @@ output = '^Midi-Bridge:A-PRO: [12] \(capture\)$'
 input = "^Non-Mixer-XT/Piano:sfizz Control$"
 
 [[rule]]
+name = "metronome-to-sfizz"
+backend = "pipewire"
+output = '^Midi-Bridge:midi-daemon:Metronome/midi-out:midi-daemon:Metronome/midi \(capture\)$'
+input = "^Non-Mixer-XT/Metronome:sfizz Control$"
+
+[[rule]]
 # This is an *audio* rule (Non-Mixer-XT's strips expose audio out-N/in-N
 # ports on PipeWire, not MIDI) -- kind defaults to "midi", so it must be
 # set explicitly here.
