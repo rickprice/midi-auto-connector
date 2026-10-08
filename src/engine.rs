@@ -3,14 +3,15 @@
 //! only ever sees [`BackendEvent`]s and talks back through [`BackendHandle`]s,
 //! so it can be exercised in tests without any real ALSA/PipeWire backend.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
+use std::path::PathBuf;
 use std::time::Duration;
 
 use crossbeam_channel::Receiver;
-use tracing::{debug, warn};
+use tracing::{debug, info, warn};
 
 use crate::backend::{BackendEvent, BackendHandle};
-use crate::config::{Config, Rule};
+use crate::config::{BackendsConfig, Config, Rule};
 use crate::lua_hooks::{self, HookContext, HookEvent};
 use crate::matcher::compute_desired_connections;
 use crate::port::{Backend, PortId, PortInfo};
@@ -27,6 +28,9 @@ struct ActiveConnection {
 }
 
 pub struct Engine {
+    config_path: PathBuf,
+    backends_config: BackendsConfig,
+    disconnect_on_shutdown: bool,
     rules: Vec<Rule>,
     rules_by_name: HashMap<String, Rule>,
     lua_timeout: Duration,
@@ -38,6 +42,7 @@ pub struct Engine {
 
 impl Engine {
     pub fn new(
+        config_path: PathBuf,
         config: &Config,
         handles: HashMap<Backend, Box<dyn BackendHandle>>,
         events_rx: Receiver<BackendEvent>,
@@ -49,6 +54,9 @@ impl Engine {
             .collect();
 
         Engine {
+            config_path,
+            backends_config: config.backends,
+            disconnect_on_shutdown: config.disconnect_on_shutdown,
             rules: config.rules.clone(),
             rules_by_name,
             lua_timeout: Duration::from_millis(config.lua.timeout_ms),
@@ -59,18 +67,80 @@ impl Engine {
         }
     }
 
+    pub fn disconnect_on_shutdown(&self) -> bool {
+        self.disconnect_on_shutdown
+    }
+
     /// Runs until the event channel closes (all backends gone) or a
-    /// message arrives on `shutdown_rx`.
-    pub fn run(&mut self, shutdown_rx: &Receiver<()>) {
+    /// message arrives on `shutdown_rx`. `reload_rx` fires once per
+    /// detected change to the config file on disk.
+    pub fn run(&mut self, shutdown_rx: &Receiver<()>, reload_rx: &Receiver<()>) {
         loop {
             crossbeam_channel::select! {
                 recv(self.events_rx) -> msg => match msg {
                     Ok(event) => self.handle_event(event),
                     Err(_) => return,
                 },
+                recv(reload_rx) -> msg => {
+                    if msg.is_ok() {
+                        self.reload();
+                    }
+                },
                 recv(shutdown_rx) -> _ => return,
             }
         }
+    }
+
+    /// Re-reads the config file this engine was started with and applies
+    /// whatever changed: rules are swapped in wholesale, any active
+    /// connection no longer matched by the new rules is torn down (running
+    /// its `on_disconnect` hook as usual), and [`Self::reconcile`] picks up
+    /// anything newly matched against the ports already known.
+    ///
+    /// `[backends]` can't be changed this way -- starting/stopping a
+    /// backend mid-run isn't supported, so that section is ignored on
+    /// reload (with a warning) and a full restart is required instead.
+    fn reload(&mut self) {
+        let new_config = match Config::load(&self.config_path) {
+            Ok(cfg) => cfg,
+            Err(err) => {
+                warn!(path = %self.config_path.display(), error = %err, "failed to reload config; keeping existing rules");
+                return;
+            }
+        };
+
+        if new_config.backends != self.backends_config {
+            warn!("[backends] changed in config but can't be hot-reloaded; restart the daemon for this to take effect");
+        }
+
+        let all_ports: Vec<PortInfo> = self.ports.values().cloned().collect();
+        let still_desired: HashSet<(PortId, PortId)> =
+            compute_desired_connections(&all_ports, &new_config.rules)
+                .into_iter()
+                .map(|c| (c.source, c.dest))
+                .collect();
+        let stale: Vec<(PortId, PortId)> = self
+            .active
+            .keys()
+            .filter(|key| !still_desired.contains(*key))
+            .cloned()
+            .collect();
+
+        self.rules_by_name = new_config
+            .rules
+            .iter()
+            .map(|r| (r.name.clone(), r.clone()))
+            .collect();
+        self.rules = new_config.rules.clone();
+        self.lua_timeout = Duration::from_millis(new_config.lua.timeout_ms);
+        self.disconnect_on_shutdown = new_config.disconnect_on_shutdown;
+
+        for (source, dest) in stale {
+            self.teardown(source, dest);
+        }
+        self.reconcile();
+
+        info!(rules = self.rules.len(), "config reloaded");
     }
 
     pub fn handle_event(&mut self, event: BackendEvent) {
@@ -298,10 +368,18 @@ mod tests {
         rules: Vec<Rule>,
         backend: RecordingBackend,
     ) -> (Engine, crossbeam_channel::Sender<BackendEvent>) {
+        engine_with_path(PathBuf::from("test.toml"), rules, backend)
+    }
+
+    fn engine_with_path(
+        config_path: PathBuf,
+        rules: Vec<Rule>,
+        backend: RecordingBackend,
+    ) -> (Engine, crossbeam_channel::Sender<BackendEvent>) {
         let (tx, rx) = crossbeam_channel::unbounded();
         let mut handles: HashMap<Backend, Box<dyn BackendHandle>> = HashMap::new();
         handles.insert(Backend::Alsa, Box::new(backend));
-        (Engine::new(&config(rules), handles, rx), tx)
+        (Engine::new(config_path, &config(rules), handles, rx), tx)
     }
 
     #[test]
@@ -447,9 +525,10 @@ mod tests {
         let backend = RecordingBackend::new("alsa");
         let (mut engine, _events_tx) = engine_with(vec![rule("r", "^Out", "^In")], backend);
         let (shutdown_tx, shutdown_rx) = crossbeam_channel::unbounded();
+        let (_reload_tx, reload_rx) = crossbeam_channel::unbounded();
 
         shutdown_tx.send(()).unwrap();
-        engine.run(&shutdown_rx);
+        engine.run(&shutdown_rx, &reload_rx);
         // If we get here, `run` returned promptly as expected.
     }
 
@@ -458,9 +537,10 @@ mod tests {
         let backend = RecordingBackend::new("alsa");
         let (mut engine, events_tx) = engine_with(vec![rule("r", "^Out", "^In")], backend);
         let (_shutdown_tx, shutdown_rx) = crossbeam_channel::unbounded::<()>();
+        let (_reload_tx, reload_rx) = crossbeam_channel::unbounded();
 
         drop(events_tx);
-        engine.run(&shutdown_rx);
+        engine.run(&shutdown_rx, &reload_rx);
     }
 
     #[test]
@@ -532,6 +612,106 @@ mod tests {
         engine.handle_event(BackendEvent::PortAdded(port(2, 0, "In", "p", false, true)));
 
         // The connect call still went through even though its hook failed.
+        assert_eq!(backend.calls().len(), 1);
+    }
+
+    #[test]
+    fn reload_tears_down_connections_no_longer_matched_by_the_new_rules() {
+        let dir = tempfile::tempdir().unwrap();
+        let config_path = dir.path().join("config.toml");
+        std::fs::write(
+            &config_path,
+            r#"
+            [[rule]]
+            name = "r2"
+            backend = "alsa"
+            output = "^Nothing"
+            input = "^Matches"
+            "#,
+        )
+        .unwrap();
+
+        let backend = RecordingBackend::new("alsa");
+        let (mut engine, _tx) =
+            engine_with_path(config_path, vec![rule("r", "^Out", "^In")], backend.clone());
+
+        let source = port(1, 0, "Out", "p", true, false);
+        let dest = port(2, 0, "In", "p", false, true);
+        engine.handle_event(BackendEvent::PortAdded(source.clone()));
+        engine.handle_event(BackendEvent::PortAdded(dest.clone()));
+        assert_eq!(backend.calls().len(), 1, "connected under the old rule");
+
+        engine.reload();
+
+        assert!(engine.active.is_empty());
+        assert_eq!(
+            backend.calls(),
+            vec![
+                RecordedCall::Connect(source.id.clone(), dest.id.clone()),
+                RecordedCall::Disconnect(source.id, dest.id),
+            ]
+        );
+    }
+
+    #[test]
+    fn reload_picks_up_newly_matching_connections() {
+        let dir = tempfile::tempdir().unwrap();
+        let config_path = dir.path().join("config.toml");
+        std::fs::write(
+            &config_path,
+            r#"
+            [[rule]]
+            name = "r"
+            backend = "alsa"
+            output = "^Out"
+            input = "^In"
+            "#,
+        )
+        .unwrap();
+
+        let backend = RecordingBackend::new("alsa");
+        // Starts with a rule that matches nothing yet present.
+        let (mut engine, _tx) = engine_with_path(
+            config_path,
+            vec![rule("r", "^Nothing", "^Matches")],
+            backend.clone(),
+        );
+
+        let source = port(1, 0, "Out", "p", true, false);
+        let dest = port(2, 0, "In", "p", false, true);
+        engine.handle_event(BackendEvent::PortAdded(source.clone()));
+        engine.handle_event(BackendEvent::PortAdded(dest.clone()));
+        assert!(backend.calls().is_empty(), "old rule doesn't match either port");
+
+        engine.reload();
+
+        assert_eq!(
+            backend.calls(),
+            vec![RecordedCall::Connect(source.id, dest.id)]
+        );
+    }
+
+    #[test]
+    fn reload_keeps_old_rules_when_new_config_is_invalid() {
+        let dir = tempfile::tempdir().unwrap();
+        let config_path = dir.path().join("config.toml");
+        std::fs::write(&config_path, "this is not valid toml[[[").unwrap();
+
+        let backend = RecordingBackend::new("alsa");
+        let (mut engine, _tx) =
+            engine_with_path(config_path, vec![rule("r", "^Out", "^In")], backend.clone());
+
+        let source = port(1, 0, "Out", "p", true, false);
+        let dest = port(2, 0, "In", "p", false, true);
+        engine.handle_event(BackendEvent::PortAdded(source.clone()));
+        engine.handle_event(BackendEvent::PortAdded(dest.clone()));
+        assert_eq!(backend.calls().len(), 1);
+
+        engine.reload();
+
+        // The bad file was rejected, so the existing connection (made
+        // under the still-active old rule) stays up.
+        assert_eq!(engine.active.len(), 1);
         assert_eq!(backend.calls().len(), 1);
     }
 }

@@ -122,7 +122,7 @@ fn default_disconnect_on_shutdown() -> bool {
 /// Which backends the daemon starts up at all. Independent of the
 /// per-rule `backend` field: a backend must be enabled here *and*
 /// matched by a rule's `backend` for a connection to be made on it.
-#[derive(Debug, Deserialize, Clone, Copy)]
+#[derive(Debug, Deserialize, Clone, Copy, PartialEq, Eq)]
 #[serde(default)]
 pub struct BackendsConfig {
     pub alsa: bool,

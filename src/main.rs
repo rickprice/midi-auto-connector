@@ -6,11 +6,12 @@ mod matcher;
 mod port;
 
 use std::collections::HashMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::thread;
 use std::time::Duration;
 
 use clap::{Parser, Subcommand};
+use notify::{Event, EventKind, RecommendedWatcher, RecursiveMode, Watcher};
 use tracing::{error, info};
 
 use backend::alsa_backend::AlsaBackend;
@@ -235,6 +236,17 @@ fn run(config_path: PathBuf) {
         }
     };
 
+    let (reload_tx, reload_rx) = crossbeam_channel::unbounded();
+    // Keep the watcher alive for the life of the process -- dropping it
+    // stops the inotify watch.
+    let _watcher = match spawn_config_watcher(&config_path, reload_tx) {
+        Ok(watcher) => Some(watcher),
+        Err(err) => {
+            error!(error = %err, "failed to watch config file for changes; config will not hot-reload");
+            None
+        }
+    };
+
     let (events_tx, events_rx) = crossbeam_channel::unbounded();
     let mut handles: HashMap<Backend, Box<dyn BackendHandle>> = HashMap::new();
     let mut pipewire_backend: Option<PipeWireBackend> = None;
@@ -270,9 +282,9 @@ fn run(config_path: PathBuf) {
     let (shutdown_tx, shutdown_rx) = crossbeam_channel::unbounded();
     spawn_signal_handler(shutdown_tx);
 
-    let mut engine = Engine::new(&config, handles, events_rx);
+    let mut engine = Engine::new(config_path.clone(), &config, handles, events_rx);
     info!(rules = config.rules.len(), "midi-auto-connector running");
-    engine.run(&shutdown_rx);
+    engine.run(&shutdown_rx, &reload_rx);
 
     // Connections made along the way persist on their own by default:
     // ALSA subscriptions live at the kernel level independent of the
@@ -280,7 +292,7 @@ fn run(config_path: PathBuf) {
     // `object.linger = true`. `disconnect_on_shutdown` (default: true)
     // controls whether that's actually what happens, or whether every
     // active connection is torn down on the way out instead.
-    if config.disconnect_on_shutdown {
+    if engine.disconnect_on_shutdown() {
         info!("disconnecting all active connections");
         engine.disconnect_all();
     }
@@ -311,6 +323,39 @@ fn spawn_signal_handler(shutdown_tx: crossbeam_channel::Sender<()>) {
             }
         })
         .expect("failed to spawn signal-handling thread");
+}
+
+/// Watches the directory containing `config_path` and sends on `reload_tx`
+/// whenever `config_path` itself is created, modified, or removed.
+///
+/// Watching the *directory* rather than the file directly, since editors
+/// that save by replacing the file (write a new inode, rename over the
+/// old one) can drop a direct file watch when the original inode goes
+/// away. The returned watcher must be kept alive for as long as the watch
+/// should stay active -- dropping it tears down the underlying inotify
+/// watch.
+fn spawn_config_watcher(
+    config_path: &Path,
+    reload_tx: crossbeam_channel::Sender<()>,
+) -> notify::Result<RecommendedWatcher> {
+    let watched_path = config_path.to_path_buf();
+    let mut watcher = notify::recommended_watcher(move |res: notify::Result<Event>| {
+        let Ok(event) = res else { return };
+        if !matches!(
+            event.kind,
+            EventKind::Create(_) | EventKind::Modify(_) | EventKind::Remove(_)
+        ) {
+            return;
+        }
+        if event.paths.iter().any(|p| p == &watched_path) {
+            let _ = reload_tx.send(());
+        }
+    })?;
+
+    let watch_dir = config_path.parent().unwrap_or_else(|| Path::new("."));
+    watcher.watch(watch_dir, RecursiveMode::NonRecursive)?;
+    info!(path = %watch_dir.display(), "watching for config changes");
+    Ok(watcher)
 }
 
 fn list_ports(

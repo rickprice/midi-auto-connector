@@ -16,6 +16,8 @@ mix bus, every time you plug it in or start it up, without touching
   rules scoped to one backend or evaluated against both.
 - **Lua hooks** on connect and disconnect, with a bounded per-script
   timeout so a bad script can't hang the daemon.
+- **Hot-reloading config**: edit the config file and the daemon picks up
+  the new rules immediately, no restart or signal needed.
 
 ## Why a `backend` field per rule?
 
@@ -183,6 +185,20 @@ is valid but will never match anything.
 You can have as many `[[rule]]` rows as you like; each is matched
 independently. A rule fans out: if `output` matches 1 port and `input`
 matches 3, all 3 connections are made.
+
+### Hot reload
+
+The daemon watches its config file and reloads automatically whenever
+it's created, modified, or replaced on disk -- no restart or signal
+needed. On reload, every active connection no longer matched by the new
+rules is disconnected (running its `on_disconnect` hook as usual), and
+anything newly matched against the ports already known is connected.
+
+`[backends]` can't be changed this way, since starting or stopping a
+backend mid-run isn't supported -- a change there is logged as a warning
+and requires a full restart to take effect. If the new file fails to
+parse or validate, the error is logged and the daemon keeps running on
+its last-known-good config.
 
 ### Pairing by capture group
 

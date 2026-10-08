@@ -1,8 +1,8 @@
 [package]
 name = "midi-auto-connector"
-version = "0.2.0"
+version = "0.3.0"
 edition = "2024"
-description = "A daemon that auto-connects ALSA and PipeWire MIDI ports, and PipeWire audio ports, based on regex rules, with optional Lua hooks on connect/disconnect."
+description = "A daemon that auto-connects ALSA and PipeWire MIDI ports, and PipeWire audio ports, based on regex rules, with optional Lua hooks on connect/disconnect and live config reload."
 license = "BSD-3-Clause"
 repository = "https://github.com/rickprice/midi-auto-connector"
 readme = "README.md"
@@ -24,6 +24,7 @@ clap = { version = "4.6.7", features = ["derive"] }
 crossbeam-channel = "0.5.17"
 directories = "6.0.0"
 mlua = { version = "0.12", features = ["lua54", "vendored"] }
+notify = "7"
 pipewire = "0.10.1"
 regex = "1.13.1"
 serde = { version = "1.0.229", features = ["derive"] }
